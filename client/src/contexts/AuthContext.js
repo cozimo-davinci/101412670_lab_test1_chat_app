@@ -6,7 +6,6 @@ export const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
     const [currentUser, setCurrentUser] = useState(null);
 
-    // On mount, check localStorage for a logged in user
     useEffect(() => {
         const storedUser = JSON.parse(localStorage.getItem('user'));
         setCurrentUser(storedUser);

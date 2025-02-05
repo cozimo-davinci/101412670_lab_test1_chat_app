@@ -27,8 +27,12 @@ export default function Dashboard() {
             socket.current.emit('register', loggedInUser.username);
         }
 
-        socket.current.on('privateMessage', (data) => setMessages((prev) => [...prev, data]));
-        socket.current.on('group_message', (data) => setMessages((prev) => [...prev, data]));
+        socket.current.on('privateMessage', (data) =>
+            setMessages((prev) => [...prev, data])
+        );
+        socket.current.on('group_message', (data) =>
+            setMessages((prev) => [...prev, data])
+        );
 
         fetchUsers();
         fetchGroups(); // Fetch groups from the database
@@ -63,43 +67,56 @@ export default function Dashboard() {
     const handleTyping = (e) => {
         setMessage(e.target.value);
 
-        if (!isTyping) {
+        // Only emit typing if a selectedUser exists (for private chat)
+        if (selectedUser && !isTyping) {
             socket.current.emit('typing', { sender: currentUser, receiver: selectedUser });
             setIsTyping(true);
         }
 
-        // Clear previous timeout
+        // Clear previous timeout if it exists
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
-        // Set new timeout for stopping typing
+        // Set new timeout to emit stopTyping after 1 second of inactivity
         typingTimeoutRef.current = setTimeout(() => {
-            socket.current.emit('stopTyping', { sender: currentUser, receiver: selectedUser });
+            if (selectedUser) {
+                socket.current.emit('stopTyping', { sender: currentUser, receiver: selectedUser });
+            }
             setIsTyping(false);
         }, 1000);
     };
 
+    // Attach typing listeners only once
     useEffect(() => {
-        socket.current.on('typing', ({ sender }) => {
+        const handleTypingEvent = ({ sender }) => {
             setTypingUser(sender);
-        });
+        };
 
-        socket.current.on('stopTyping', ({ sender }) => {
-            if (sender === typingUser) {
-                setTypingUser(null);
-            }
-        });
+        const handleStopTypingEvent = ({ sender }) => {
+            // Only clear if the sender is the one currently typing
+            setTypingUser((prev) => (prev === sender ? null : prev));
+        };
+
+        socket.current.on('typing', handleTypingEvent);
+        socket.current.on('stopTyping', handleStopTypingEvent);
 
         return () => {
-            socket.current.off('typing');
-            socket.current.off('stopTyping');
+            socket.current.off('typing', handleTypingEvent);
+            socket.current.off('stopTyping', handleStopTypingEvent);
         };
-    }, [typingUser]);
+    }, []); // Empty dependency array ensures these listeners attach only once
 
     // Send a private message
     const sendPrivateMessage = () => {
         if (message.trim() && selectedUser) {
-            socket.current.emit('privateMessage', { sender: currentUser, receiver: selectedUser, message });
-            setMessages((prev) => [...prev, { sender: currentUser, message, date_sent: new Date() }]);
+            socket.current.emit('privateMessage', {
+                sender: currentUser,
+                receiver: selectedUser,
+                message,
+            });
+            setMessages((prev) => [
+                ...prev,
+                { sender: currentUser, message, date_sent: new Date() },
+            ]);
             setMessage('');
         }
     };
@@ -109,11 +126,14 @@ export default function Dashboard() {
         if (message.trim() && selectedRoom) {
             try {
                 // Use selectedRoom._id to send the message
-                const response = await axios.post(`http://localhost:7000/api/group_messages/${selectedRoom._id}/messages`, {
-                    message,
-                    sender: currentUser,
-                });
-                // Optionally, emit the message via socket if needed:
+                const response = await axios.post(
+                    `http://localhost:7000/api/group_messages/${selectedRoom._id}/messages`,
+                    {
+                        message,
+                        sender: currentUser,
+                    }
+                );
+                // Optionally, emit the message via socket if needed
                 socket.current.emit('group_message', response.data);
                 setMessages((prev) => [...prev, response.data]);
                 setMessage('');
@@ -135,7 +155,9 @@ export default function Dashboard() {
         socket.current.emit('join_group', groupId);
 
         try {
-            const response = await axios.get(`http://localhost:7000/api/group_messages/${groupId}/messages`);
+            const response = await axios.get(
+                `http://localhost:7000/api/group_messages/${groupId}/messages`
+            );
             setMessages(response.data);
         } catch (error) {
             console.error('Error fetching group messages:', error);
@@ -157,7 +179,9 @@ export default function Dashboard() {
         setMessages([]);
 
         try {
-            const response = await axios.get(`http://localhost:7000/api/private_messages/${currentUser}/${username}`);
+            const response = await axios.get(
+                `http://localhost:7000/api/private_messages/${currentUser}/${username}`
+            );
             setMessages(response.data);
         } catch (error) {
             console.error('Error fetching private messages:', error);
@@ -242,7 +266,7 @@ export default function Dashboard() {
                         )
                     )}
                     {typingUser && (
-                        <div className="typing-indicator text-gray-500">
+                        <div className="typing-indicator text-red-500">
                             {typingUser} is typing...
                         </div>
                     )}
