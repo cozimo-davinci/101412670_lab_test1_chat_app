@@ -1,25 +1,24 @@
 const express = require('express');
 const router = express.Router();
-const PrivateMessages = require('../models/privateMessage');
+const PrivateMessage = require('../models/privateMessage');
 
-
-// Retrieve the private messages history
-
+// Fetch private messages between two users
 router.get('/:sender/:receiver', async (req, res) => {
+    const { sender, receiver } = req.params;
+
     try {
-        const { sender, receiver } = req.params;
-        const messages = await PrivateMessages.find({
+        const messages = await PrivateMessage.find({
             $or: [
                 { sender, receiver },
                 { sender: receiver, receiver: sender }
             ]
         }).sort({ date_sent: 1 });
+
         res.status(200).json(messages);
     } catch (error) {
-        console.error('Error retrieving private messages:', error);
-        res.status(500).json({ message: error.message });
+        console.error('Error fetching private messages:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
-
 
 module.exports = router;

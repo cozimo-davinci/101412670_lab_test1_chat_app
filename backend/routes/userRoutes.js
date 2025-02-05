@@ -61,4 +61,17 @@ router.post('/login', async (req, res) => {
 });
 
 
+
+//getAllusers
+router.get('/all_users', async (req, res) => {
+    try {
+        const allUsers = await User.find();
+        res.status(200).json(allUsers);
+        console.log("Users have been retrieved successfully");
+    } catch (err) {
+        console.error(err);
+        console.log("Something went wrong after retrieving all the users...")
+    }
+})
+
 module.exports = router;

@@ -7,19 +7,26 @@ require('dotenv').config();
 const userRoutes = require('./routes/userRoutes');
 const groupMessageRoutes = require('./routes/groupMessageRoutes');
 const privateMessageRoutes = require('./routes/privateMessageRoutes');
+const groupRoutes = require('./routes/groupRoutes');
 
 const PrivateMessages = require('./models/privateMessage');
 const GroupMessages = require('./models/groupMessage');
+const Group = require('./models/groupSchema'); // Updated path for Group schema
 
 const app = express();
 
-app.use(cors());
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/api/auth', userRoutes);
 app.use('/api/group_messages', groupMessageRoutes);
 app.use('/api/private_messages', privateMessageRoutes);
+app.use('/api/groups', groupRoutes);
 
 const PORT = process.env.PORT || 7000;
 const dbURI = process.env.MONGO_URI;
@@ -34,7 +41,12 @@ const server = app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
 
-const io = socket(server);
+const io = socket(server, {
+    cors: {
+        origin: '*', // Allow only requests from this origin
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    },
+});
 
 const userSocketsPrivate = {};
 
@@ -48,101 +60,59 @@ io.on('connection', (socket) => {
         console.log('User registered:', username, 'with socket ID:', socket.id);
     });
 
-    // Private Messaging
+    // Private Messaging (unchanged, already implemented)
     socket.on('privateMessage', async (data) => {
         const { sender, receiver, message } = data;
-        const date_sent = new Date(); // Corrected timestamp
+        const date_sent = new Date();
 
-        // Save the private message to the database
         try {
-            const newMessage = new PrivateMessages({
-                sender,
-                receiver,
-                message,
-                date_sent
-            });
+            const newMessage = new PrivateMessages({ sender, receiver, message, date_sent });
             await newMessage.save();
-            console.log(`Private message from ${sender} to ${receiver} saved: ${message}`);
+            console.log(`Private message saved:`, newMessage);
         } catch (error) {
             console.error('Error saving private message:', error);
         }
 
-        // Send the message to the receiver if they are connected
         const receiverSocketId = userSocketsPrivate[receiver];
         if (receiverSocketId) {
-            io.to(receiverSocketId).emit('privateMessage', {
-                sender,
-                message,
-                date_sent
-            });
-            console.log(`Private message from ${sender} to ${receiver} sent: ${message}`);
+            io.to(receiverSocketId).emit('privateMessage', { sender, message, date_sent });
         } else {
             console.log(`Receiver ${receiver} is not connected.`);
         }
     });
 
-    // Fetch message history for private messages
-    socket.on('fetchPrivateMessages', async ({ sender, receiver }) => {
-        try {
-            const messages = await PrivateMessages.find({
-                $or: [
-                    { sender, receiver },
-                    { sender: receiver, receiver: sender }
-                ]
-            }).sort({ date_sent: 1 });
-
-            socket.emit('privateMessagesHistory', messages);
-        } catch (error) {
-            console.error('Error fetching private messages:', error);
-        }
-    });
-
-    // Group Messaging
+    // Group Messaging Logic (Updated)
 
     // Join a group
-    socket.on('join_room', (room) => {
-        socket.join(room);
-        console.log(`User ${socket.id} joined group ${room}`);
+    socket.on('join_group', async (groupId) => {
+        socket.join(groupId);
+        console.log(`User ${socket.id} joined group ${groupId}`);
 
-        // Fetch and send group message history when a user joins
-        GroupMessages.find({ room }).sort({ date_sent: 1 }).then((messages) => {
-            socket.emit('groupMessagesHistory', messages);
-        }).catch((error) => {
-            console.error('Error fetching group messages:', error);
-        });
+        // Fetch and send group messages to the user
+        const group = await Group.findById(groupId).populate('messages');
+        socket.emit('group_messages', group.messages);
     });
 
-    // Leave a group
-    socket.on('leave_room', (room) => {
-        socket.leave(room);
-        console.log(`User ${socket.id} left group ${room}`);
-    });
+    // Send a group message
+    socket.on('send_group_message', async (groupId, messageData) => {
+        const { sender, message } = messageData;
 
-    // Handle sending group messages
-    socket.on('group_message', async (data) => {
-        const { from_user, room, message } = data;
-        const date_sent = new Date();
-
-        try {
-            const newGroupMessage = new GroupMessages({
-                from_user,
-                room,
-                message,
-                date_sent
-            });
-            await newGroupMessage.save();
-            console.log(`Group message from ${from_user} in room ${room} saved: ${message}`);
-        } catch (error) {
-            console.error('Error saving group message:', error);
-        }
-
-        // Emit the group message to all users in the room
-        io.to(room).emit('group_message', {
-            from_user,
+        const newGroupMessage = new GroupMessages({
+            sender,
             message,
-            date_sent
+            group: groupId,
+            date_sent: new Date(),
         });
-        console.log(`Group message from ${from_user} in room ${room} sent: ${message}`);
+
+        await newGroupMessage.save();
+
+        // Update the group with the new message
+        await Group.findByIdAndUpdate(groupId, {
+            $push: { messages: newGroupMessage._id },
+        });
+
+        // Emit the message to everyone in the group
+        io.to(groupId).emit('group_message', newGroupMessage);
     });
 
     // Handle disconnection
